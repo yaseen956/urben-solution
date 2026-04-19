@@ -10,7 +10,7 @@ export const stats = async (_req, res) => {
     Service.countDocuments(),
     Booking.countDocuments(),
     Technician.countDocuments({ isApproved: false }),
-    Booking.find({ status: 'Completed' })
+    Booking.find({ status: { $in: ['Completed', 'completed'] } })
   ]);
 
   res.json({

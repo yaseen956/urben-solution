@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../services/api.js';
 
 export default function BookingHistory() {
@@ -28,6 +29,9 @@ export default function BookingHistory() {
                 <span className="rounded-md bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-700">{booking.status}</span>
                 <p className="mt-3 text-xl font-black text-ink">Rs. {booking.price}</p>
                 <p className="text-xs uppercase text-zinc-500">{booking.paymentStatus}</p>
+                <Link className="mt-3 inline-flex rounded-md border border-zinc-200 px-3 py-2 text-sm font-bold text-ink hover:border-coral hover:text-coral" to={`/tracking/${booking._id}`}>
+                  Track live
+                </Link>
               </div>
             </div>
           </article>

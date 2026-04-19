@@ -61,9 +61,11 @@ export default function Services() {
         <BookingModal
           service={selected}
           onClose={() => setSelected(null)}
-          onBooked={() => {
+          onBooked={(result) => {
             setSelected(null);
-            navigate('/bookings');
+            navigate(`/tracking/${result.booking._id}`, {
+              state: { notifiedTechnicians: result.notifiedTechnicians || result.booking.broadcastedTo?.length || 0 }
+            });
           }}
         />
       )}

@@ -71,9 +71,11 @@ const run = async () => {
     password: 'Tech@123',
     skills: [categories[0], categories[1], 'deep cleaning', 'ac', 'repair'],
     experience: 5,
-    location: 'Delhi NCR',
+    address: 'Connaught Place, New Delhi, Delhi',
+    location: { type: 'Point', coordinates: [77.209, 28.6139] },
     isApproved: true,
     isOnline: true,
+    isAvailable: true,
     rating: 4.8
   });
 
@@ -92,10 +94,12 @@ const run = async () => {
   await Booking.create({
     user: user._id,
     technician: technician._id,
+    technicianId: technician._id,
     service: docs[0]._id,
     scheduledDate: new Date(Date.now() + 86400000),
     timeSlot: '10:00 AM - 12:00 PM',
     address: '221B, Green Avenue, Delhi',
+    location: { type: 'Point', coordinates: [77.209, 28.6139] },
     price: docs[0].price,
     status: 'Pending'
   });

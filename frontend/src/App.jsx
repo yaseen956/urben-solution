@@ -7,6 +7,7 @@ import Login from './pages/Login.jsx';
 import Register from './pages/Register.jsx';
 import Services from './pages/Services.jsx';
 import BookingHistory from './pages/BookingHistory.jsx';
+import TrackingPage from './pages/TrackingPage.jsx';
 import TechnicianDashboard from './dashboard/TechnicianDashboard.jsx';
 import AdminDashboard from './pages/AdminDashboard.jsx';
 
@@ -25,6 +26,14 @@ export default function App() {
             element={
               <ProtectedRoute type="user">
                 <BookingHistory />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/tracking/:id"
+            element={
+              <ProtectedRoute type="user">
+                <TrackingPage />
               </ProtectedRoute>
             }
           />

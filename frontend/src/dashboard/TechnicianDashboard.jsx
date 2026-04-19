@@ -1,16 +1,35 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../services/api.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import StatCard from '../components/StatCard.jsx';
+import { getSocket } from '../services/socket.js';
+import ActiveJob from './ActiveJob.jsx';
+import EarningsDashboard from './EarningsDashboard.jsx';
+import OrdersList from './OrdersList.jsx';
+import PerformanceDashboard from './PerformanceDashboard.jsx';
+import ProfilePage from './ProfilePage.jsx';
+import Support from './Support.jsx';
+import { normalizeJob, playNewJobSound } from './techUtils.js';
+
+const tabs = ['orders', 'earnings', 'performance', 'support', 'profile'];
 
 export default function TechnicianDashboard() {
   const { auth, setAuth } = useAuth();
+  const [activeTab, setActiveTab] = useState('orders');
   const [jobs, setJobs] = useState([]);
   const [earnings, setEarnings] = useState({ total: 0, completedJobs: 0 });
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [etaText, setEtaText] = useState('');
+  const [trackingError, setTrackingError] = useState('');
+  const [alerts, setAlerts] = useState([]);
+  const lastLocationSentAt = useRef(0);
 
   const load = async () => {
-    const [jobsRes, earningsRes] = await Promise.all([api.get('/technician/jobs'), api.get('/technician/earnings')]);
-    setJobs(jobsRes.data.bookings);
+    const [jobsRes, earningsRes] = await Promise.all([
+      api.get('/technician/jobs'),
+      api.get('/technician/earnings', { params: { range: 'monthly' } })
+    ]);
+    setJobs(jobsRes.data.bookings.map(normalizeJob));
     setEarnings(earningsRes.data);
   };
 
@@ -18,14 +37,108 @@ export default function TechnicianDashboard() {
     load();
   }, []);
 
+  useEffect(() => {
+    const socket = getSocket();
+    socket.emit('join-technician', auth.profile.id);
+
+    socket.on('new-job', (job) => {
+      const normalized = normalizeJob(job);
+      playNewJobSound();
+      setAlerts((current) => [{ id: Date.now(), text: `New ${normalized.serviceName} job nearby` }, ...current].slice(0, 5));
+      setJobs((current) => (current.some((item) => item._id === normalized._id) ? current : [normalized, ...current]));
+    });
+
+    socket.on('job-accepted', (job) => {
+      setJobs((current) =>
+        current.map((item) =>
+          item._id === job.bookingId || item._id === job._id
+            ? normalizeJob({ ...item, ...job, _id: item._id, status: job.status || 'assigned' })
+            : item
+        )
+      );
+    });
+
+    socket.on('job-locked', ({ bookingId }) => {
+      setAlerts((current) => [{ id: Date.now(), text: 'A broadcasted job was accepted by another technician.' }, ...current].slice(0, 5));
+      setJobs((current) => current.filter((item) => item._id !== bookingId));
+    });
+
+    socket.on('system-alert', (alert) => {
+      setAlerts((current) => [{ id: Date.now(), text: alert.message || 'System alert received' }, ...current].slice(0, 5));
+    });
+
+    return () => {
+      socket.off('new-job');
+      socket.off('job-accepted');
+      socket.off('job-locked');
+      socket.off('system-alert');
+    };
+  }, [auth.profile.id]);
+
+  const activeJob = useMemo(() => {
+    return jobs.find((job) => ['accepted', 'assigned', 'in_progress'].includes(job.status));
+  }, [jobs]);
+
+  useEffect(() => {
+    if (!auth.profile.isAvailable || !navigator.geolocation) return undefined;
+
+    const socket = getSocket();
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const now = Date.now();
+        const nextLocation = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        };
+        setCurrentLocation(nextLocation);
+        setTrackingError('');
+
+        if (now - lastLocationSentAt.current < 6000) return;
+        lastLocationSentAt.current = now;
+        socket.emit('technician-location-update', {
+          bookingId: activeJob?._id,
+          technicianId: auth.profile.id,
+          ...nextLocation
+        });
+      },
+      () => setTrackingError('Live location permission is needed for navigation and customer tracking.'),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [activeJob?._id, auth.profile.id, auth.profile.isAvailable]);
+
   const setAvailability = async () => {
-    const { data } = await api.put('/technician/availability', { isOnline: !auth.profile.isOnline });
+    const { data } = await api.patch('/technician/status', { isAvailable: !auth.profile.isAvailable });
     setAuth({ ...auth, profile: data.technician });
   };
 
+  const acceptJob = (bookingId) => {
+    getSocket().emit('accept-job', { bookingId, technicianId: auth.profile.id });
+  };
+
+  const rejectJob = (bookingId) => {
+    setJobs((current) => current.filter((job) => job._id !== bookingId));
+    setAlerts((current) => [{ id: Date.now(), text: 'Job removed from your queue.' }, ...current].slice(0, 5));
+  };
+
   const updateStatus = async (bookingId, status) => {
-    await api.put('/technician/status', { bookingId, status });
-    load();
+    const { data } = await api.patch(`/book/${bookingId}/status`, { status });
+    setJobs((current) => current.map((job) => (job._id === bookingId ? normalizeJob(data.booking) : job)));
+    if (status === 'completed') load();
+  };
+
+  const renderTab = () => {
+    if (activeTab === 'earnings') return <EarningsDashboard />;
+    if (activeTab === 'performance') return <PerformanceDashboard />;
+    if (activeTab === 'support') return <Support activeJob={activeJob} />;
+    if (activeTab === 'profile') return <ProfilePage />;
+    return (
+      <div className="grid gap-6 xl:grid-cols-[1fr_1.1fr]">
+        <OrdersList jobs={jobs} currentLocation={currentLocation} onAccept={acceptJob} onReject={rejectJob} />
+        <ActiveJob job={activeJob} currentLocation={currentLocation} etaText={etaText} onEta={setEtaText} onStatus={updateStatus} />
+      </div>
+    );
   };
 
   return (
@@ -36,42 +149,42 @@ export default function TechnicianDashboard() {
           <h1 className="mt-2 text-4xl font-black text-ink">Hello, {auth.profile.name}</h1>
           <p className="mt-2 text-zinc-600">{auth.profile.isApproved ? 'Approved account' : 'Waiting for admin approval'}</p>
         </div>
-        <button className={auth.profile.isOnline ? 'btn-primary bg-emerald-600 hover:bg-emerald-700' : 'btn-secondary'} onClick={setAvailability}>
-          {auth.profile.isOnline ? 'Online' : 'Offline'}
+        <button className={auth.profile.isAvailable ? 'btn-primary bg-emerald-600 hover:bg-emerald-700' : 'btn-secondary'} onClick={setAvailability}>
+          {auth.profile.isAvailable ? 'Online' : 'Offline'}
         </button>
       </div>
-      <div className="mt-8 grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total earnings" value={`Rs. ${earnings.total}`} />
-        <StatCard label="Completed jobs" value={earnings.completedJobs} />
-        <StatCard label="Assigned jobs" value={jobs.length} />
+
+      <div className="mt-8 grid gap-4 sm:grid-cols-4">
+        <StatCard label="Monthly earnings" value={`Rs. ${earnings.total || 0}`} />
+        <StatCard label="Completed jobs" value={earnings.completedJobs || 0} />
+        <StatCard label="Incoming" value={jobs.filter((job) => job.status === 'broadcasted').length} />
+        <StatCard label="Alerts" value={alerts.length} />
       </div>
-      <div className="mt-8 grid gap-4">
-        {jobs.map((job) => (
-          <article className="panel p-5" key={job._id}>
-            <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
-              <div>
-                <span className="rounded-md bg-cloud px-3 py-1 text-xs font-bold text-zinc-700">{job.status}</span>
-                <h2 className="mt-3 text-xl font-black text-ink">{job.service?.title}</h2>
-                <p className="mt-2 text-sm text-zinc-600">
-                  Customer: {job.user?.name} | {job.user?.phone}
-                </p>
-                <p className="mt-1 text-sm text-zinc-600">
-                  {new Date(job.scheduledDate).toLocaleDateString()} at {job.timeSlot}
-                </p>
-                <p className="mt-1 text-sm text-zinc-500">{job.address}</p>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2">
-                {['Accepted', 'Rejected', 'In Progress', 'Completed'].map((status) => (
-                  <button className="btn-secondary px-3 py-2" key={status} onClick={() => updateStatus(job._id, status)}>
-                    {status}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </article>
+
+      {trackingError && <p className="mt-6 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800">{trackingError}</p>}
+      {alerts.length > 0 && (
+        <div className="mt-6 grid gap-2">
+          {alerts.map((alert) => (
+            <p className="rounded-md border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-700" key={alert.id}>
+              {alert.text}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-8 flex gap-2 overflow-x-auto">
+        {tabs.map((tab) => (
+          <button
+            className={`rounded-md px-4 py-2 text-sm font-bold capitalize ${activeTab === tab ? 'bg-ink text-white' : 'border border-zinc-200 bg-white text-zinc-700'}`}
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+          >
+            {tab}
+          </button>
         ))}
-        {jobs.length === 0 && <p className="panel p-8 text-center text-zinc-500">Assigned jobs will appear here when customers book matching services.</p>}
       </div>
+
+      <div className="mt-6">{renderTab()}</div>
     </section>
   );
 }

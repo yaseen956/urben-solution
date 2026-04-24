@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import api from '../services/api.js';
 import { getSocket } from '../services/socket.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import MapComponent from '../components/MapComponent.jsx';
 
 export default function TrackingPage() {
   const { id } = useParams();
@@ -73,20 +74,6 @@ export default function TrackingPage() {
     };
   }, [auth?.profile?.id, id]);
 
-  const mapUrl = useMemo(() => {
-    const position = technicianPosition || customerPosition;
-    if (!position) return '';
-    const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-    if (key) {
-      if (technicianPosition && customerPosition) {
-        return `https://www.google.com/maps/embed/v1/directions?key=${key}&origin=${technicianPosition.lat},${technicianPosition.lng}&destination=${customerPosition.lat},${customerPosition.lng}&mode=driving`;
-      }
-      return `https://www.google.com/maps/embed/v1/view?key=${key}&center=${position.lat},${position.lng}&zoom=15`;
-    }
-    const delta = 0.01;
-    return `https://www.openstreetmap.org/export/embed.html?bbox=${position.lng - delta}%2C${position.lat - delta}%2C${position.lng + delta}%2C${position.lat + delta}&layer=mapnik&marker=${position.lat}%2C${position.lng}`;
-  }, [customerPosition, technicianPosition]);
-
   const waiting = booking && ['broadcasted', 'pending', 'paid'].includes(booking.status) && !technician;
 
   return (
@@ -101,11 +88,30 @@ export default function TrackingPage() {
       )}
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_340px]">
         <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-          {mapUrl ? (
-            <iframe title="Technician live location" className="h-[520px] w-full" src={mapUrl} />
-          ) : (
-            <div className="grid h-[520px] place-items-center text-zinc-500">Waiting for technician location...</div>
-          )}
+          <MapComponent
+            title="Live technician tracking"
+            center={customerPosition || technicianPosition}
+            zoom={13}
+            highlightedId={technician?.id || booking?.technician?._id}
+            markers={[
+              ...(customerPosition ? [{ id: 'customer', name: 'You', variant: 'user', location: customerPosition }] : []),
+              ...(technicianPosition
+                ? [
+                    {
+                      id: technician?.id || booking?.technician?._id || 'technician',
+                      name: technician?.name || booking?.technician?.name || 'Technician',
+                      rating: technician?.rating || booking?.technician?.rating,
+                      address: technician?.address || booking?.technician?.address,
+                      isAvailable: true,
+                      location: technicianPosition
+                    }
+                  ]
+                : [])
+            ]}
+            route={customerPosition && technicianPosition ? { start: customerPosition, end: technicianPosition } : null}
+            emptyMessage="Waiting for technician location..."
+            height={520}
+          />
         </div>
         <aside className="panel p-5">
           <h2 className="text-xl font-black text-ink">Job details</h2>

@@ -1,7 +1,7 @@
 import { distanceKm } from './techUtils.js';
 
 export default function OrdersList({ jobs, currentLocation, onAccept, onReject }) {
-  const incoming = jobs.filter((job) => job.status === 'broadcasted');
+  const incoming = jobs.filter((job) => ['broadcasted', 'pending'].includes(job.status));
 
   return (
     <section className="panel p-5">

@@ -4,9 +4,11 @@ import {
   earnings,
   loginTechnician,
   me,
+  nearbyTechnicians,
   performance,
   profile,
   registerTechnician,
+  updateLiveLocation,
   updateAvailability,
   updateJobStatus,
   updateProfile
@@ -14,6 +16,7 @@ import {
 import { getTechnicianBookings } from '../controllers/bookingController.js';
 import { protectTechnician } from '../middleware/authMiddleware.js';
 import { upload } from '../middleware/uploadMiddleware.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = express.Router();
 
@@ -23,17 +26,18 @@ router.post(
     { name: 'profilePhoto', maxCount: 1 },
     { name: 'idProof', maxCount: 1 }
   ]),
-  registerTechnician
+  asyncHandler(registerTechnician)
 );
-router.post('/login', loginTechnician);
-router.get('/me', protectTechnician, me);
-router.get('/jobs', protectTechnician, getTechnicianBookings);
-router.put('/status', protectTechnician, updateJobStatus);
-router.patch('/status', protectTechnician, updateAvailability);
-router.put('/availability', protectTechnician, updateAvailability);
-router.get('/earnings', protectTechnician, earnings);
-router.get('/performance', protectTechnician, performance);
-router.get('/profile', protectTechnician, profile);
+router.post('/login', asyncHandler(loginTechnician));
+router.get('/nearby', asyncHandler(nearbyTechnicians));
+router.get('/me', protectTechnician, asyncHandler(me));
+router.get('/jobs', protectTechnician, asyncHandler(getTechnicianBookings));
+router.put('/status', protectTechnician, asyncHandler(updateJobStatus));
+router.patch('/status', protectTechnician, asyncHandler(updateAvailability));
+router.put('/availability', protectTechnician, asyncHandler(updateAvailability));
+router.get('/earnings', protectTechnician, asyncHandler(earnings));
+router.get('/performance', protectTechnician, asyncHandler(performance));
+router.get('/profile', protectTechnician, asyncHandler(profile));
 router.put(
   '/profile',
   protectTechnician,
@@ -42,8 +46,9 @@ router.put(
     { name: 'idProof', maxCount: 1 },
     { name: 'others', maxCount: 5 }
   ]),
-  updateProfile
+  asyncHandler(updateProfile)
 );
-router.post('/support/ticket', protectTechnician, createSupportTicket);
+router.post('/support/ticket', protectTechnician, asyncHandler(createSupportTicket));
+router.post('/location/update', protectTechnician, asyncHandler(updateLiveLocation));
 
 export default router;

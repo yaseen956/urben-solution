@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
-import LocationInput, { composeAddress, geocodeTextAddress } from '../components/LocationInput.jsx';
+import LocationInput, { composeAddress } from '../components/LocationInput.jsx';
 
 const skillOptions = ['AC Repair', 'RO Repair', 'Cleaning', 'Electrician', 'Plumbing', 'Carpenter', 'Pest Control', 'Salon', 'Painting'];
 
@@ -39,14 +39,7 @@ export default function Register() {
     setError('');
     try {
       if (type === 'technician') {
-        let submitValues = values;
-        if (values.address.trim() && (!Number.isFinite(Number(values.lat)) || !Number.isFinite(Number(values.lng)))) {
-          const geocoded = await geocodeTextAddress(values.address);
-          if (geocoded) {
-            submitValues = { ...values, ...geocoded };
-            setValues(submitValues);
-          }
-        }
+        const submitValues = values;
         if (!submitValues.address.trim()) {
           setError('Technician address is required.');
           return;

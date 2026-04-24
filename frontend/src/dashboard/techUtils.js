@@ -1,7 +1,7 @@
 export const normalizeJob = (job) => ({
   ...job,
   _id: job._id || job.bookingId,
-  status: job.status || 'broadcasted',
+  status: job.status || 'pending',
   serviceName: job.serviceName || job.service?.title || 'Service job',
   lat: job.lat ?? job.location?.coordinates?.[1],
   lng: job.lng ?? job.location?.coordinates?.[0],

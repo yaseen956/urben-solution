@@ -2,6 +2,7 @@ import Technician from '../models/Technician.js';
 import Booking from '../models/Booking.js';
 import SupportTicket from '../models/SupportTicket.js';
 import { signToken } from '../utils/token.js';
+import { findMatchingTechnicians } from '../services/dispatchService.js';
 
 const technicianPayload = (technician) => ({
   id: technician._id,
@@ -99,11 +100,13 @@ export const updateJobStatus = async (req, res) => {
     Pending: 'pending',
     'In Progress': 'in_progress',
     in_progress: 'in_progress',
+    on_the_way: 'on_the_way',
+    'On The Way': 'on_the_way',
     Completed: 'completed',
     completed: 'completed',
     cancelled: 'cancelled'
   }[status];
-  const allowed = ['accepted', 'assigned', 'cancelled', 'pending', 'in_progress', 'completed'];
+  const allowed = ['accepted', 'assigned', 'cancelled', 'pending', 'in_progress', 'completed', 'on_the_way'];
   if (!allowed.includes(normalized)) return res.status(400).json({ message: 'Invalid status' });
 
   const booking = await Booking.findOne({
@@ -116,6 +119,7 @@ export const updateJobStatus = async (req, res) => {
   booking.technicianId = req.technician._id;
   if (normalized === 'accepted' && !booking.acceptedAt) booking.acceptedAt = new Date();
   if (normalized === 'assigned' && !booking.assignedAt) booking.assignedAt = new Date();
+  if (normalized === 'on_the_way' && !booking.assignedAt) booking.assignedAt = new Date();
   if (normalized === 'in_progress' && !booking.startedAt) booking.startedAt = new Date();
   if (normalized === 'completed' && !booking.completedAt) booking.completedAt = new Date();
   if (normalized === 'completed' && booking.paymentStatus !== 'paid') {
@@ -236,4 +240,108 @@ export const createSupportTicket = async (req, res) => {
     technicianId: req.technician._id
   });
   res.status(201).json({ ticket });
+};
+
+export const nearbyTechnicians = async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  const radiusKm = Math.min(50, Math.max(1, Number(req.query.radiusKm) || 10));
+  const serviceName = (req.query.serviceName || '').trim();
+
+  if (![lat, lng].every(Number.isFinite)) {
+    return res.status(400).json({ message: 'Valid lat and lng query params are required.' });
+  }
+
+  const baseTechnicians = await Technician.aggregate([
+    {
+      $geoNear: {
+        near: { type: 'Point', coordinates: [lng, lat] },
+        distanceField: 'distanceMeters',
+        maxDistance: radiusKm * 1000,
+        spherical: true,
+        query: {
+          isApproved: true,
+          isOnline: true
+        }
+      }
+    },
+    {
+      $project: {
+        password: 0
+      }
+    }
+  ]);
+
+  let matchingIds = new Set();
+  if (serviceName) {
+    const serviceLike = { title: serviceName };
+    const matching = await findMatchingTechnicians({
+      service: serviceLike,
+      lat,
+      lng,
+      maxDistance: radiusKm * 1000
+    });
+    matchingIds = new Set(matching.map((technician) => String(technician._id)));
+  }
+
+  const technicians = baseTechnicians.map((technician) => {
+    const coordinates = technician.location?.coordinates || [];
+    return {
+      id: technician._id,
+      name: technician.name,
+      phone: technician.phone,
+      rating: technician.rating,
+      address: technician.address,
+      skills: technician.skills,
+      isAvailable: technician.isAvailable,
+      isOnline: technician.isOnline,
+      location:
+        coordinates.length === 2
+          ? {
+              lat: coordinates[1],
+              lng: coordinates[0]
+            }
+          : null,
+      distanceKm: Number(((technician.distanceMeters || 0) / 1000).toFixed(1)),
+      matchesSkill: serviceName ? matchingIds.has(String(technician._id)) : true
+    };
+  });
+
+  const eligibleTechnicians = technicians.filter((technician) => technician.isAvailable && technician.matchesSkill);
+  res.json({
+    technicians,
+    eligibleTechnicians,
+    closestTechnician: eligibleTechnicians[0] || technicians[0] || null,
+    radiusKm
+  });
+};
+
+export const updateLiveLocation = async (req, res) => {
+  const lat = Number(req.body.lat);
+  const lng = Number(req.body.lng);
+  const bookingId = req.body.bookingId;
+
+  if (![lat, lng].every(Number.isFinite)) {
+    return res.status(400).json({ message: 'Valid latitude and longitude are required.' });
+  }
+
+  await Technician.findByIdAndUpdate(req.technician._id, {
+    location: { type: 'Point', coordinates: [lng, lat] },
+    lastActiveAt: new Date()
+  });
+
+  if (bookingId) {
+    req.app.get('io').to(`booking:${bookingId}`).emit('location-update', {
+      bookingId,
+      technicianId: req.technician._id,
+      lat,
+      lng,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  res.json({
+    message: 'Location updated',
+    location: { lat, lng }
+  });
 };

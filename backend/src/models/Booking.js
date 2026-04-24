@@ -26,6 +26,9 @@ const bookingSchema = new mongoose.Schema(
     paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
     paymentId: String,
     orderId: { type: String, index: true },
+    cancelOtp: String,
+    cancelOtpExpiresAt: Date,
+    cancelRequestedBy: { type: String, enum: ['user', 'technician'] },
     status: {
       type: String,
       enum: [
@@ -42,7 +45,9 @@ const bookingSchema = new mongoose.Schema(
         'accepted',
         'assigned',
         'in_progress',
-        'completed'
+        'completed',
+        'on_the_way',
+        'cancelled'
       ],
       default: 'Requested'
     },

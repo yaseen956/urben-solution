@@ -37,6 +37,48 @@ export const createBooking = async (req, res) => {
   res.status(201).json({ booking: populated, notifiedTechnicians });
 };
 
+export const requestCancellationOtp = async (req, res) => {
+  const actor = req.user ? 'user' : 'technician';
+  const ownerQuery = req.user
+    ? { _id: req.params.id, user: req.user._id }
+    : { _id: req.params.id, $or: [{ technician: req.technician._id }, { technicianId: req.technician._id }] };
+  const booking = await Booking.findOne(ownerQuery);
+  if (!booking) return res.status(404).json({ message: 'Booking not found' });
+
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+  booking.cancelOtp = otp;
+  booking.cancelOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  booking.cancelRequestedBy = actor;
+  await booking.save();
+
+  console.log(`Cancellation OTP for booking ${booking._id}: ${otp}`);
+  res.json({ message: 'Cancellation OTP sent', expiresInMinutes: 10 });
+};
+
+export const verifyCancellationOtp = async (req, res) => {
+  const actor = req.user ? 'user' : 'technician';
+  const ownerQuery = req.user
+    ? { _id: req.params.id, user: req.user._id }
+    : { _id: req.params.id, $or: [{ technician: req.technician._id }, { technicianId: req.technician._id }] };
+  const booking = await Booking.findOne(ownerQuery).populate('user technician');
+  if (!booking) return res.status(404).json({ message: 'Booking not found' });
+  if (!req.body.otp || booking.cancelOtp !== req.body.otp || !booking.cancelOtpExpiresAt || booking.cancelOtpExpiresAt < new Date()) {
+    return res.status(400).json({ message: 'Invalid or expired OTP' });
+  }
+
+  booking.status = 'cancelled';
+  booking.cancelOtp = undefined;
+  booking.cancelOtpExpiresAt = undefined;
+  booking.cancelRequestedBy = actor;
+  await booking.save();
+
+  const io = req.app.get('io');
+  io.to(`booking:${booking._id}`).emit('cancelBooking', { bookingId: booking._id, cancelledBy: actor });
+  io.to(`user:${booking.user._id}`).emit('cancelBooking', { bookingId: booking._id, cancelledBy: actor });
+  if (booking.technician?._id) io.to(`technician:${booking.technician._id}`).emit('cancelBooking', { bookingId: booking._id, cancelledBy: actor });
+  res.json({ booking });
+};
+
 export const getUserBookings = async (req, res) => {
   const bookings = await Booking.find({ user: req.user._id })
     .populate('service')
@@ -58,7 +100,7 @@ export const getTechnicianBookings = async (req, res) => {
     $or: [
       { technician: req.technician._id },
       { technicianId: req.technician._id },
-      { broadcastedTo: req.technician._id, status: 'broadcasted' }
+      { broadcastedTo: req.technician._id, status: 'pending' }
     ]
   })
     .populate('service')
@@ -79,7 +121,7 @@ export const addReview = async (req, res) => {
 };
 
 export const updateBookingStatus = async (req, res) => {
-  const allowed = ['accepted', 'assigned', 'in_progress', 'completed', 'cancelled'];
+  const allowed = ['accepted', 'assigned', 'on_the_way', 'in_progress', 'completed', 'cancelled'];
   const { status } = req.body;
   if (!allowed.includes(status)) return res.status(400).json({ message: 'Invalid status' });
 

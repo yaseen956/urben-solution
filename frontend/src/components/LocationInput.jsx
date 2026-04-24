@@ -1,45 +1,61 @@
-import { useMemo, useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 
-const fallbackAddress = 'Location detected. Add house number or landmark for accuracy.';
+const MapComponent = lazy(() => import('./MapComponent.jsx'));
 
-export const geocodeTextAddress = async (address) => {
-  const cleanAddress = address.trim();
-  const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  if (!cleanAddress || !key) return null;
-  const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(cleanAddress)}&key=${key}`);
-  const data = await response.json();
-  const result = data.results?.[0];
-  if (!result) return null;
-  return {
-    address: result.formatted_address,
-    lat: result.geometry.location.lat,
-    lng: result.geometry.location.lng
-  };
-};
+const fallbackAddress = 'Unable to fetch address. Please enter manually.';
 
 export default function LocationInput({ value, onChange, label = 'Address', required = true }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const key = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  const hasLocation = Number.isFinite(Number(value.lat)) && Number.isFinite(Number(value.lng));
 
   const setValue = (patch) => onChange({ ...value, ...patch });
 
-// this is  geolocation temmprory if  you dont have google geocoding api key
   const reverseGeocode = async (lat, lng) => {
-  const res = await fetch(
-    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`
-  );
-  const data = await res.json();
-  return data.display_name;
-  };
+    try {
+      const key = import.meta.env.VITE_MAPPLS_API_KEY;
+      if (!key || !String(key).trim()) {
+        console.error('API KEY MISSING');
+        return fallbackAddress;
+      }
 
-  // this is geocoding using google api if you have key
-  // const reverseGeocode = async (lat, lng) => {
-  //   if (!key) return fallbackAddress;
-  //   const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${key}`);
-  //   const data = await response.json();
-  //   return data.results?.[0]?.formatted_address || fallbackAddress;
-  // };
+      console.log('LAT LNG:', lat, lng);
+      const url = `https://apis.mappls.com/advancedmaps/v1/${String(key).trim()}/rev_geocode?lat=${lat}&lng=${lng}&region=IND`;
+      console.log('Mappls URL:', url);
+
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error('Reverse Geocode HTTP Error:', res.status, res.statusText);
+        return fallbackAddress;
+      }
+      const data = await res.json();
+
+      console.log('MAPPLS RESPONSE:', data);
+
+      if (!data || !data.results || data.results.length === 0) {
+        console.error('No results from Mappls API');
+        return fallbackAddress;
+      }
+
+      const place = data.results[0];
+      const address = [
+        place.houseNumber,
+        place.street,
+        place.locality,
+        place.city,
+        place.state,
+        place.pincode,
+        place.country
+      ]
+        .filter(Boolean)
+        .join(', ');
+
+      return address || fallbackAddress;
+    } catch (err) {
+      console.error('Reverse Geocode Error:', err);
+      return fallbackAddress;
+    }
+  };
 
   const detectCurrentLocation = () => {
     setError('');
@@ -50,52 +66,31 @@ export default function LocationInput({ value, onChange, label = 'Address', requ
 
     setLoading(true);
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
+      async (pos) => {
         try {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
           const address = await reverseGeocode(lat, lng);
-          setValue({ address, lat, lng });
+
+          setValue({
+            ...value,
+            lat,
+            lng,
+            address
+          });
         } catch {
-          setError('Location found, but address lookup failed. Please enter the address manually.');
+          setError('Failed to get address');
         } finally {
           setLoading(false);
         }
       },
       (geoError) => {
         setLoading(false);
-        setError(geoError.code === 1 ? 'Location permission denied.' : 'Unable to detect current location.');
+        setError(geoError.code === 1 ? 'Location permission denied' : 'Unable to detect current location.');
       },
       { enableHighAccuracy: true, timeout: 12000 }
     );
   };
-
-  const geocodeTypedAddress = async () => {
-    if (!value.address?.trim()) return null;
-    setError('');
-    setLoading(true);
-    try {
-      const result = await geocodeTextAddress(value.address);
-      if (result) {
-        setValue(result);
-        return result;
-      }
-      // if (!key) setError('Google Maps key is required to convert typed addresses.');
-      // else setError('Could not find that address. Try a more complete address.');
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const mapUrl = useMemo(() => {
-    if (!Number.isFinite(Number(value.lat)) || !Number.isFinite(Number(value.lng))) return '';
-    if (key) return `https://www.google.com/maps/embed/v1/view?key=${key}&center=${value.lat},${value.lng}&zoom=16`;
-    const lat = Number(value.lat);
-    const lng = Number(value.lng);
-    const delta = 0.01;
-    return `https://www.openstreetmap.org/export/embed.html?bbox=${lng - delta}%2C${lat - delta}%2C${lng + delta}%2C${lat + delta}&layer=mapnik&marker=${lat}%2C${lng}`;
-  }, [key, value.lat, value.lng]);
 
   return (
     <div className="grid gap-3">
@@ -105,8 +100,7 @@ export default function LocationInput({ value, onChange, label = 'Address', requ
         name="address"
         placeholder="Enter your city/address (e.g., Kunraghat, Gorakhpur)"
         value={value.address || ''}
-        onBlur={geocodeTypedAddress}
-        onChange={(event) => setValue({ address: event.target.value, lat: '', lng: '' })}
+        onChange={(event) => setValue({ address: event.target.value })}
         required={required}
       />
       <div className="grid gap-3 sm:grid-cols-2">
@@ -116,7 +110,20 @@ export default function LocationInput({ value, onChange, label = 'Address', requ
       <button className="btn-secondary" type="button" onClick={detectCurrentLocation} disabled={loading}>
         {loading ? 'Detecting location...' : 'Use Current Location'}
       </button>
-      {mapUrl && <iframe className="h-56 w-full rounded-lg border border-zinc-200" src={mapUrl} title={`${label} map preview`} />}
+      {hasLocation && (
+        <div className="mt-2 w-full overflow-hidden rounded-lg border border-zinc-200">
+          <Suspense fallback={<div className="h-56 w-full bg-cloud" />}>
+            <MapComponent
+              title="Location preview"
+              center={{ lat: Number(value.lat), lng: Number(value.lng) }}
+              zoom={15}
+              markers={[{ id: 'selected-location', name: 'You', variant: 'user', location: { lat: Number(value.lat), lng: Number(value.lng) } }]}
+              height={224}
+              showLegend={false}
+            />
+          </Suspense>
+        </div>
+      )}
       {error && <p className="rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
     </div>
   );

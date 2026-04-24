@@ -27,18 +27,27 @@ export const findMatchingTechnicians = async ({ service, lat, lng, maxDistance =
   const coordinates = [Number(lng), Number(lat)];
   if (!coordinates.every(Number.isFinite)) return [];
 
-  return Technician.find({
-    isApproved: true,
-    isOnline: true,
-    isAvailable: true,
-    skills: { $in: skillMatchersFor(service) },
-    location: {
-      $near: {
-        $geometry: { type: 'Point', coordinates },
-        $maxDistance: maxDistance
+  return Technician.aggregate([
+    {
+      $geoNear: {
+        near: { type: 'Point', coordinates },
+        distanceField: 'distanceMeters',
+        maxDistance: maxDistance,
+        spherical: true,
+        query: {
+          isApproved: true,
+          isOnline: true,
+          isAvailable: true,
+          skills: { $in: skillMatchersFor(service) }
+        }
+      }
+    },
+    {
+      $project: {
+        password: 0
       }
     }
-  }).select('-password');
+  ]);
 };
 
 export const buildCustomerJobPayload = async ({ booking, technician }) => {
@@ -81,14 +90,24 @@ export const buildCustomerJobPayload = async ({ booking, technician }) => {
 
 export const dispatchBooking = async ({ booking, service, io }) => {
   const coordinates = booking.location?.coordinates || [];
-  const technicians = await findMatchingTechnicians({
+  let technicians = await findMatchingTechnicians({
     service,
     lng: coordinates[0],
     lat: coordinates[1]
   });
+  let radiusKm = 10;
+  if (technicians.length === 0) {
+    technicians = await findMatchingTechnicians({
+      service,
+      lng: coordinates[0],
+      lat: coordinates[1],
+      maxDistance: 20000
+    });
+    radiusKm = 20;
+  }
 
   booking.broadcastedTo = technicians.map((technician) => technician._id);
-  booking.status = technicians.length > 0 ? 'broadcasted' : 'pending';
+  booking.status = 'pending';
   booking.serviceName = booking.serviceName || service.title;
   await booking.save();
 
@@ -101,11 +120,13 @@ export const dispatchBooking = async ({ booking, service, io }) => {
     price: booking.price,
     scheduledDate: booking.scheduledDate,
     timeSlot: booking.timeSlot,
-    notifiedTechnicians: technicians.length
+    notifiedTechnicians: technicians.length,
+    searchRadiusKm: radiusKm
   };
 
   technicians.forEach((technician) => {
     io.to(`technician:${technician._id}`).emit('new-job', jobPayload);
+    io.to(`technician:${technician._id}`).emit('newBooking', jobPayload);
   });
 
   io.to(`user:${booking.user}`).emit('booking-broadcasted', {

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../services/api.js';
-import LocationInput, { composeAddress, geocodeTextAddress } from './LocationInput.jsx';
+import LocationInput, { composeAddress } from './LocationInput.jsx';
 
 export default function BookingModal({ service, onClose, onBooked }) {
   const [form, setForm] = useState({
@@ -15,6 +15,7 @@ export default function BookingModal({ service, onClose, onBooked }) {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [nearby, setNearby] = useState({ technicians: [], closestTechnician: null, radiusKm: 10 });
 
   const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
 
@@ -28,22 +29,46 @@ export default function BookingModal({ service, onClose, onBooked }) {
       document.body.appendChild(script);
     });
 
+  useEffect(() => {
+    const lat = Number(form.lat);
+    const lng = Number(form.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      setNearby({ technicians: [], closestTechnician: null, radiusKm: 10 });
+      return undefined;
+    }
+
+    let cancelled = false;
+    const fetchNearby = async () => {
+      try {
+        const { data } = await api.get('/technicians/nearby', {
+          params: {
+            lat,
+            lng,
+            serviceName: service.title
+          }
+        });
+        if (!cancelled) setNearby(data);
+      } catch {
+        if (!cancelled) setNearby({ technicians: [], closestTechnician: null, radiusKm: 10 });
+      }
+    };
+
+    fetchNearby();
+    const timer = window.setInterval(fetchNearby, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [form.lat, form.lng, service.title]);
+
   const submit = async (event) => {
     event.preventDefault();
     setLoading(true);
     setError('');
     try {
-      let locationForm = form;
-      if (form.address.trim() && (!Number.isFinite(Number(form.lat)) || !Number.isFinite(Number(form.lng)))) {
-        const geocoded = await geocodeTextAddress(form.address);
-        if (geocoded) {
-          locationForm = { ...form, ...geocoded };
-          setForm(locationForm);
-        }
-      }
-
+      const locationForm = form;
       if (!locationForm.address.trim() || !Number.isFinite(Number(locationForm.lat)) || !Number.isFinite(Number(locationForm.lng))) {
-        setError('Use current location or enter a valid address before payment.');
+        setError('Use current location before payment so we can place the service address accurately.');
         setLoading(false);
         return;
       }
@@ -117,6 +142,18 @@ export default function BookingModal({ service, onClose, onBooked }) {
           <select className="input" name="paymentMethod" value={form.paymentMethod} onChange={update}>
             <option value="razorpay">Razorpay</option>
           </select>
+          {!!nearby.technicians.length && (
+            <div className="rounded-lg bg-cloud p-4 text-sm text-zinc-700">
+              <p className="font-bold text-ink">
+                {nearby.eligibleTechnicians?.length || 0} eligible technician{nearby.eligibleTechnicians?.length === 1 ? '' : 's'} within {nearby.radiusKm} km
+              </p>
+              {nearby.closestTechnician && (
+                <p className="mt-1">
+                  Closest: <span className="font-semibold">{nearby.closestTechnician.name}</span> ({nearby.closestTechnician.distanceKm} km, rating {nearby.closestTechnician.rating || 'new'})
+                </p>
+              )}
+            </div>
+          )}
         </div>
         {error && <p className="mt-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
         <button className="btn-primary mt-6 w-full" disabled={loading}>

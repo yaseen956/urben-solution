@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import api, { API_URL } from '../services/api.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import LocationInput, { composeAddress, geocodeTextAddress } from '../components/LocationInput.jsx';
+import LocationInput, { composeAddress } from '../components/LocationInput.jsx';
 
 const skillOptions = ['AC Repair', 'RO Repair', 'Cleaning', 'Electrician', 'Plumbing', 'Carpenter', 'Pest Control', 'Salon', 'Painting'];
 
@@ -36,14 +36,7 @@ export default function ProfilePage() {
   const submit = async (event) => {
     event.preventDefault();
     setError('');
-    let submitForm = form;
-    if (form.address.trim() && (!Number.isFinite(Number(form.lat)) || !Number.isFinite(Number(form.lng)))) {
-      const geocoded = await geocodeTextAddress(form.address);
-      if (geocoded) {
-        submitForm = { ...form, ...geocoded };
-        setForm(submitForm);
-      }
-    }
+    const submitForm = form;
     if (!submitForm.address.trim()) {
       setError('Address is required.');
       return;

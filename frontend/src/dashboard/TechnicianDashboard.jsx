@@ -42,7 +42,7 @@ export default function TechnicianDashboard() {
     socket.emit('join-technician', auth.profile.id);
 
     socket.on('new-job', (job) => {
-      const normalized = normalizeJob(job);
+        const normalized = normalizeJob(job);
       playNewJobSound();
       setAlerts((current) => [{ id: Date.now(), text: `New ${normalized.serviceName} job nearby` }, ...current].slice(0, 5));
       setJobs((current) => (current.some((item) => item._id === normalized._id) ? current : [normalized, ...current]));
@@ -100,6 +100,10 @@ export default function TechnicianDashboard() {
           technicianId: auth.profile.id,
           ...nextLocation
         });
+        api.post('/location/update', {
+          bookingId: activeJob?._id,
+          ...nextLocation
+        }).catch(() => null);
       },
       () => setTrackingError('Live location permission is needed for navigation and customer tracking.'),
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 12000 }
@@ -157,7 +161,7 @@ export default function TechnicianDashboard() {
       <div className="mt-8 grid gap-4 sm:grid-cols-4">
         <StatCard label="Monthly earnings" value={`Rs. ${earnings.total || 0}`} />
         <StatCard label="Completed jobs" value={earnings.completedJobs || 0} />
-        <StatCard label="Incoming" value={jobs.filter((job) => job.status === 'broadcasted').length} />
+        <StatCard label="Incoming" value={jobs.filter((job) => ['broadcasted', 'pending'].includes(job.status)).length} />
         <StatCard label="Alerts" value={alerts.length} />
       </div>
 
